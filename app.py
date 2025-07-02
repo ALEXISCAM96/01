@@ -217,6 +217,8 @@ if uploaded_file is not None:
 
 import requests
 
+import requests
+
 st.header("📊 Estadísticas del último partido de un equipo (API-Football)")
 
 team_name_input = st.text_input("Nombre del equipo (en inglés, ej: Argentina, Brazil, Germany):", "Argentina")
@@ -232,29 +234,36 @@ if st.button("Buscar último partido y estadísticas"):
     if team_response.status_code == 200 and team_response.json()["results"] > 0:
         team_data = team_response.json()["response"][0]
         team_id = team_data["team"]["id"]
+        team_name_found = team_data["team"]["name"]
 
-        # Paso 2: buscar último partido
+        # Paso 2: buscar últimos partidos (sin limitar por temporada)
         fixture_url = "https://v3.football.api-sports.io/fixtures"
         fixture_response = requests.get(fixture_url, headers=headers, params={
             "team": team_id,
-            "season": 2023,
             "last": 1
         })
 
         if fixture_response.status_code == 200 and fixture_response.json()["results"] > 0:
             match = fixture_response.json()["response"][0]
-            stats = match["statistics"]
+            stats_url = f"https://v3.football.api-sports.io/fixtures/statistics?fixture={match['fixture']['id']}"
+            stats_response = requests.get(stats_url, headers=headers)
 
             home_team = match["teams"]["home"]["name"]
             away_team = match["teams"]["away"]["name"]
             st.subheader(f"{home_team} vs {away_team}")
 
-            # Mostrar estadísticas por equipo
-            for team_stats in stats:
-                st.markdown(f"### 📋 {team_stats['team']['name']}")
-                stats_dict = {item['type']: item['value'] for item in team_stats['statistics']}
-                st.json(stats_dict)
+            if stats_response.status_code == 200:
+                stats_data = stats_response.json()["response"]
+                if stats_data:
+                    for team_stats in stats_data:
+                        st.markdown(f"### 📋 {team_stats['team']['name']}")
+                        stats_dict = {item['type']: item['value'] for item in team_stats['statistics']}
+                        st.json(stats_dict)
+                else:
+                    st.warning("Estadísticas no disponibles para este partido.")
+            else:
+                st.error("Error al obtener estadísticas del partido.")
         else:
-            st.error("No se encontró el último partido del equipo.")
+            st.warning(f"No se encontraron partidos recientes para {team_name_found}.")
     else:
         st.error("Equipo no encontrado. Asegurate de escribirlo correctamente en inglés.")
