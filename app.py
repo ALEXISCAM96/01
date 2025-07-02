@@ -1,10 +1,10 @@
 
 import streamlit as st
-import pandas as pd
 import requests
 import numpy as np
+from collections import Counter
 
-st.title("⚽ Predicción Inteligente basada en forma actual")
+st.title("⚽ Predicción Avanzada Multimodelo")
 
 match_input = st.text_input("Escribe un partido (ej: Real Madrid vs Barcelona):", "Real Madrid vs Barcelona")
 
@@ -13,7 +13,7 @@ if st.button("Analizar partido"):
         st.error("Por favor escribe el partido en formato: Equipo A vs Equipo B")
     else:
         team1_name, team2_name = [t.strip() for t in match_input.split("vs")]
-        headers = { "x-apisports-key": "39a57dc2bceae2bab6870799951ef4b1" }
+        headers = {"x-apisports-key": "39a57dc2bceae2bab6870799951ef4b1"}
 
         def get_team_id(name):
             r = requests.get("https://v3.football.api-sports.io/teams", headers=headers, params={"search": name})
@@ -22,50 +22,113 @@ if st.button("Analizar partido"):
                 return data["response"][0]["team"]["id"], data["response"][0]["team"]["name"]
             return None, None
 
-        team1_id, team1_real_name = get_team_id(team1_name)
-        team2_id, team2_real_name = get_team_id(team2_name)
+        team1_id, team1_real = get_team_id(team1_name)
+        team2_id, team2_real = get_team_id(team2_name)
 
         if not team1_id or not team2_id:
             st.error("No se encontraron los equipos.")
         else:
+            st.success(f"Equipos detectados: {team1_real} vs {team2_real}")
+
+            # --- Modelo 1: Forma actual ponderada ---
+            st.subheader("🧠 Forma Actual Ponderada (últimos 10 partidos)")
+
             def get_last_matches(team_id):
                 r = requests.get("https://v3.football.api-sports.io/fixtures", headers=headers, params={"team": team_id, "last": 10})
                 data = r.json()["response"]
                 for idx, m in enumerate(data):
                     m["team_id"] = team_id
-                    m["weight"] = 1.0 - (idx * 0.08)  # peso decreciente
+                    m["weight"] = 1.0 - (idx * 0.08)
                 return data
 
-            def calculate_weighted_score(matches):
+            def weighted_score(matches):
                 score = 0
                 total_weight = 0
+                valid = 0
                 for m in matches:
-                    weight = m["weight"]
+                    w = m["weight"]
                     is_home = m["teams"]["home"]["id"] == m["team_id"]
                     gf = m["goals"]["home"] if is_home else m["goals"]["away"]
                     ga = m["goals"]["away"] if is_home else m["goals"]["home"]
+                    if gf is None or ga is None: continue
+                    result = 3 if gf > ga else (1 if gf == ga else 0)
+                    score += result * w
+                    total_weight += w
+                    valid += 1
+                return round(score / total_weight, 2) if valid > 0 else None
 
-                    result_score = 3 if gf > ga else (1 if gf == ga else 0)
-                    score += result_score * weight
-                    total_weight += weight
-                return round(score / total_weight, 2) if total_weight > 0 else 0
+            t1_matches = get_last_matches(team1_id)
+            t2_matches = get_last_matches(team2_id)
+            t1_score = weighted_score(t1_matches)
+            t2_score = weighted_score(t2_matches)
 
-            team1_matches = get_last_matches(team1_id)
-            team2_matches = get_last_matches(team2_id)
-
-            team1_score = calculate_weighted_score(team1_matches)
-            team2_score = calculate_weighted_score(team2_matches)
-
-            st.subheader("📊 Puntuación de forma (ponderada)")
-            st.write(f"{team1_real_name}: {team1_score}")
-            st.write(f"{team2_real_name}: {team2_score}")
-
-            if team1_score > team2_score + 0.3:
-                prediction = f"Gana {team1_real_name}"
-            elif team2_score > team1_score + 0.3:
-                prediction = f"Gana {team2_real_name}"
+            if t1_score is not None:
+                st.write(f"{team1_real}: {t1_score}")
             else:
-                prediction = "Empate probable"
+                st.warning(f"No hay datos recientes para {team1_real}")
 
-            st.subheader("🔮 Predicción ajustada por forma reciente")
-            st.success(f"Resultado estimado: {prediction}")
+            if t2_score is not None:
+                st.write(f"{team2_real}: {t2_score}")
+            else:
+                st.warning(f"No hay datos recientes para {team2_real}")
+
+            if t1_score is not None and t2_score is not None:
+                if t1_score > t2_score + 0.3:
+                    st.success(f"➡️ Predicción por forma: Gana {team1_real}")
+                    forma_winner = team1_real
+                elif t2_score > t1_score + 0.3:
+                    st.success(f"➡️ Predicción por forma: Gana {team2_real}")
+                    forma_winner = team2_real
+                else:
+                    st.info("➡️ Predicción por forma: Empate probable")
+                    forma_winner = "Empate"
+            else:
+                forma_winner = None
+
+            # --- Modelo 2: Historial H2H ---
+            st.subheader("📚 Historial H2H (últimos 5 enfrentamientos)")
+            h2h_url = "https://v3.football.api-sports.io/fixtures/headtohead"
+            h2h_response = requests.get(h2h_url, headers=headers, params={"h2h": f"{team1_id}-{team2_id}", "last": 5})
+            h2h_data = h2h_response.json()["response"]
+
+            if h2h_data:
+                team1_wins = 0
+                team2_wins = 0
+                draws = 0
+                for m in h2h_data:
+                    g1 = m["goals"]["home"]
+                    g2 = m["goals"]["away"]
+                    winner = None
+                    if g1 == g2:
+                        draws += 1
+                    elif m["teams"]["home"]["id"] == team1_id:
+                        if g1 > g2:
+                            team1_wins += 1
+                        else:
+                            team2_wins += 1
+                    else:
+                        if g2 > g1:
+                            team1_wins += 1
+                        else:
+                            team2_wins += 1
+                st.write(f"{team1_real} ganó {team1_wins} / {team2_real} ganó {team2_wins} / Empates: {draws}")
+                if team1_wins > team2_wins:
+                    h2h_winner = team1_real
+                elif team2_wins > team1_wins:
+                    h2h_winner = team2_real
+                else:
+                    h2h_winner = "Empate"
+                st.success(f"➡️ Predicción por H2H: {h2h_winner}")
+            else:
+                st.warning("No hay historial reciente entre estos equipos.")
+                h2h_winner = None
+
+            # --- Modelo combinado final ---
+            st.subheader("🧮 Predicción combinada")
+            votes = [forma_winner, h2h_winner]
+            votes = [v for v in votes if v]
+            if votes:
+                final_vote = Counter(votes).most_common(1)[0][0]
+                st.success(f"✅ Predicción final combinada: {final_vote}")
+            else:
+                st.warning("No hay suficientes datos para generar una predicción combinada.")
