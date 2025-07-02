@@ -219,11 +219,13 @@ import requests
 
 import requests
 
-st.header("📊 Estadísticas del último partido de un equipo (API-Football)")
+import requests
 
-team_name_input = st.text_input("Nombre del equipo (en inglés, ej: Argentina, Brazil, Germany):", "Argentina")
+st.header("📊 Estadísticas de los últimos partidos de un equipo (API-Football)")
 
-if st.button("Buscar último partido y estadísticas"):
+team_name_input = st.text_input("Nombre del equipo (en inglés, ej: Argentina, Brazil, Germany):", "Germany")
+
+if st.button("Buscar últimos 15 partidos"):
     # Paso 1: buscar ID del equipo
     team_search_url = "https://v3.football.api-sports.io/teams"
     headers = {
@@ -236,25 +238,32 @@ if st.button("Buscar último partido y estadísticas"):
         team_id = team_data["team"]["id"]
         team_name_found = team_data["team"]["name"]
 
-        # Paso 2: buscar últimos partidos (sin limitar por temporada)
+        # Paso 2: buscar últimos 15 partidos
         fixture_url = "https://v3.football.api-sports.io/fixtures"
         fixture_response = requests.get(fixture_url, headers=headers, params={
             "team": team_id,
-            "last": 1
+            "last": 15
         })
 
         if fixture_response.status_code == 200 and fixture_response.json()["results"] > 0:
-            match = fixture_response.json()["response"][0]
-            stats_url = f"https://v3.football.api-sports.io/fixtures/statistics?fixture={match['fixture']['id']}"
-            stats_response = requests.get(stats_url, headers=headers)
+            matches = fixture_response.json()["response"]
+            match_options = {
+                f"{m['fixture']['date'][:10]} - {m['teams']['home']['name']} vs {m['teams']['away']['name']}":
+                m['fixture']['id']
+                for m in matches
+            }
 
-            home_team = match["teams"]["home"]["name"]
-            away_team = match["teams"]["away"]["name"]
-            st.subheader(f"{home_team} vs {away_team}")
+            selected_match_label = st.selectbox("Selecciona un partido para ver estadísticas:", list(match_options.keys()))
+            selected_fixture_id = match_options[selected_match_label]
+
+            # Consultar estadísticas del fixture seleccionado
+            stats_url = f"https://v3.football.api-sports.io/fixtures/statistics?fixture={selected_fixture_id}"
+            stats_response = requests.get(stats_url, headers=headers)
 
             if stats_response.status_code == 200:
                 stats_data = stats_response.json()["response"]
                 if stats_data:
+                    st.subheader(f"📈 Estadísticas de {selected_match_label}")
                     for team_stats in stats_data:
                         st.markdown(f"### 📋 {team_stats['team']['name']}")
                         stats_dict = {item['type']: item['value'] for item in team_stats['statistics']}
@@ -267,3 +276,70 @@ if st.button("Buscar último partido y estadísticas"):
             st.warning(f"No se encontraron partidos recientes para {team_name_found}.")
     else:
         st.error("Equipo no encontrado. Asegurate de escribirlo correctamente en inglés.")
+
+
+
+# ---------------------------
+# 📊 Estadísticas por jugador
+# ---------------------------
+st.header("👤 Estadísticas por jugador (del partido seleccionado)")
+
+if 'selected_fixture_id' in locals():
+    player_stats_url = f"https://v3.football.api-sports.io/fixtures/players?fixture={selected_fixture_id}"
+    player_stats_response = requests.get(player_stats_url, headers=headers)
+
+    if player_stats_response.status_code == 200:
+        player_stats_data = player_stats_response.json()["response"]
+        for team_players in player_stats_data:
+            st.markdown(f"### 🧑‍💼 {team_players['team']['name']}")
+            for player in team_players["players"]:
+                name = player["player"]["name"]
+                stats = player["statistics"][0]
+                st.markdown(f"**{name}**")
+                st.json(stats)
+    else:
+        st.warning("No se pudieron obtener las estadísticas por jugador.")
+
+# ---------------------------
+# 🏆 Tabla de posiciones
+# ---------------------------
+st.header("🏆 Ranking de una liga")
+
+league_input = st.text_input("Nombre de la liga (ej: Premier League, Bundesliga, La Liga):", "Bundesliga")
+
+# Mapeo simple nombre -> ID (puede ampliarse)
+league_ids = {
+    "Premier League": 39,
+    "La Liga": 140,
+    "Bundesliga": 78,
+    "Serie A": 135,
+    "Ligue 1": 61
+}
+
+if league_input in league_ids:
+    standings_url = "https://v3.football.api-sports.io/standings"
+    standings_response = requests.get(standings_url, headers=headers, params={
+        "league": league_ids[league_input],
+        "season": 2023
+    })
+
+    if standings_response.status_code == 200:
+        data = standings_response.json()
+        standings = data["response"][0]["league"]["standings"][0]
+        st.subheader(f"📊 Tabla de posiciones - {league_input} (2023)")
+        df_standings = pd.DataFrame([{
+            "Posición": team["rank"],
+            "Equipo": team["team"]["name"],
+            "Puntos": team["points"],
+            "PJ": team["all"]["played"],
+            "PG": team["all"]["win"],
+            "PE": team["all"]["draw"],
+            "PP": team["all"]["lose"],
+            "GF": team["all"]["goals"]["for"],
+            "GC": team["all"]["goals"]["against"]
+        } for team in standings])
+        st.dataframe(df_standings)
+    else:
+        st.error("No se pudo obtener el ranking.")
+else:
+    st.info("Escribe exactamente el nombre de una liga soportada (ej: Bundesliga, Premier League, etc.).")
