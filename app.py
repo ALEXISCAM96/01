@@ -175,3 +175,40 @@ if predict_button:
     # 5. Display the prediction
     st.subheader("Predicted Outcome")
     st.write(f"The predicted match outcome is: **{predicted_result[0]}**")
+
+
+# ----------------------------
+# NUEVA SECCIÓN: Carga de CSV
+# ----------------------------
+st.header("📂 Predicción por archivo CSV")
+
+uploaded_file = st.file_uploader("Sube un archivo CSV con partidos para predecir", type=["csv"])
+
+if uploaded_file is not None:
+    try:
+        df = pd.read_csv(uploaded_file)
+        st.success("Archivo CSV cargado correctamente.")
+        st.dataframe(df.head())
+
+        # Preprocesamiento similar al flujo manual
+        categorical_cols = ['tournament', 'city', 'country', 'neutral']
+        df_encoded = pd.get_dummies(df, columns=categorical_cols, drop_first=False)
+
+        for col in training_columns:
+            if col not in df_encoded.columns:
+                df_encoded[col] = 0
+
+        extra_cols = [col for col in df_encoded.columns if col not in training_columns]
+        df_encoded = df_encoded.drop(columns=extra_cols)
+        df_encoded = df_encoded[training_columns]
+
+        predictions_encoded = best_estimator_lgb.predict(df_encoded)
+        predictions = label_encoder.inverse_transform(predictions_encoded)
+
+        df["Predicción"] = predictions
+
+        st.subheader("📊 Resultados de la predicción:")
+        st.dataframe(df[["home_team", "away_team", "Predicción"]])
+
+    except Exception as e:
+        st.error(f"Ocurrió un error al procesar el archivo: {e}")
