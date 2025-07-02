@@ -179,6 +179,38 @@ if st.button("Analizar partido"):
             st.markdown(f"**{team2_real}**: {t2_stats['corners']} córners, {t2_stats['yellow']} amarillas, {t2_stats['red']} rojas")
 
 
+
+            # Goleadores recientes
+            st.subheader("🥅 Goleadores recientes en enfrentamientos directos")
+
+            def get_last_h2h_fixture(team1_id, team2_id):
+                url = "https://v3.football.api-sports.io/fixtures/headtohead"
+                r = requests.get(url, headers=headers, params={"h2h": f"{team1_id}-{team2_id}", "last": 1})
+                data = r.json()["response"]
+                return data[0]["fixture"]["id"] if data else None
+
+            def get_goals_from_fixture(fixture_id):
+                url = f"https://v3.football.api-sports.io/fixtures/events?fixture={fixture_id}"
+                r = requests.get(url, headers=headers)
+                if r.status_code == 200:
+                    events = r.json()["response"]
+                    goal_scorers = [e["player"]["name"] for e in events if e["type"] == "Goal" and e.get("player")]
+                    return Counter(goal_scorers).most_common(3)
+                return []
+
+            last_fixture_id = get_last_h2h_fixture(team1_id, team2_id)
+            if last_fixture_id:
+                top_scorers = get_goals_from_fixture(last_fixture_id)
+                if top_scorers:
+                    st.markdown("**Goleadores destacados del último encuentro:**")
+                    for name, count in top_scorers:
+                        st.markdown(f"- {name} ⚽ x{count}")
+                else:
+                    st.info("No se registraron goles en el último enfrentamiento.")
+            else:
+                st.warning("No se encontró un partido reciente entre estos equipos.")
+
+
 # Próximamente:
             st.subheader("📈 Próximamente: Goles esperados, córners, tarjetas y goleadores")
             st.markdown("- Estimación de goles por equipo (⚽)")
