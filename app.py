@@ -1,345 +1,137 @@
+
 import streamlit as st
-import joblib
 import pandas as pd
+import requests
 import numpy as np
-import warnings
+from collections import Counter
 
-# Suppress specific warnings that might clutter the output
-warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
-warnings.filterwarnings('ignore', category=FutureWarning, module='sklearn')
+st.title("⚽ Predicción Automática de Partidos de Fútbol")
 
-# Add a title to the Streamlit application
-st.title("Football Match Outcome Prediction")
+match_input = st.text_input("Escribe un partido (ej: Real Madrid vs Barcelona):", "Real Madrid vs Barcelona")
 
-# Here the trained model is loaded from the 'lgb_model.joblib' file.
-# Make sure 'lgb_model.joblib' is in the same folder as 'app.py'.
-try:
-    best_estimator_lgb = joblib.load('lgb_model.joblib')
-    st.success("LightGBM model loaded successfully.")
-except FileNotFoundError:
-    st.error("Error: lgb_model.joblib not found. Please ensure the model file is in the correct directory.")
-    st.stop() # Stop the app if the model cannot be loaded
+if st.button("Analizar partido"):
+    if " vs " not in match_input.lower():
+        st.error("Por favor escribe el partido en formato: Equipo A vs Equipo B")
+    else:
+        team1_name, team2_name = [t.strip() for t in match_input.split("vs")]
+        headers = { "x-apisports-key": "39a57dc2bceae2bab6870799951ef4b1" }
 
-# Here the LabelEncoder is loaded from the 'label_encoder.joblib' file.
-# Make sure 'label_encoder.joblib' is in the same folder as 'app.py'.
-# It is used to convert the model's numerical results back to text.
-try:
-    label_encoder = joblib.load('label_encoder.joblib')
-    st.success("LabelEncoder loaded successfully.")
-except FileNotFoundError:
-    st.error("Error: label_encoder.joblib not found. Please ensure the encoder file is in the correct directory.")
-    st.stop() # Stop the app if the encoder cannot be loaded
+        def get_team_id(name):
+            r = requests.get("https://v3.football.api-sports.io/teams", headers=headers, params={"search": name})
+            data = r.json()
+            if data["results"] > 0:
+                return data["response"][0]["team"]["id"], data["response"][0]["team"]["name"]
+            return None, None
 
-# Here the list of column names is loaded from the 'training_columns.pkl' file.
-# Make sure 'training_columns.pkl' is in the same folder as 'app.py'.
-# It is used to ensure that the user's input columns match those used for training.
-try:
-    with open('training_columns.pkl', 'rb') as f:
-        training_columns = joblib.load(f)
-    st.success("Training columns loaded successfully.")
-except FileNotFoundError:
-    st.error("Error: training_columns.pkl not found. Please ensure the columns file is in the correct directory.")
-    st.stop() # Stop the app if the columns cannot be loaded
+        team1_id, team1_real_name = get_team_id(team1_name)
+        team2_id, team2_real_name = get_team_id(team2_name)
 
-st.write("Model and encoder loaded, ready for predictions.")
-
-
-# Create the input fields for the user
-st.header("Enter Match Details and Engineered Features")
-
-# Categorical features
-st.subheader("Categorical Features")
-tournament = st.text_input("Tournament", "Friendly")
-city = st.text_input("City", "Neutral Venue")
-country = st.text_input("Country", "Neutral Country")
-home_team = st.text_input("Home Team", "Team A")
-away_team = st.text_input("Away Team", "Team B")
-neutral = st.checkbox("Neutral Venue", False)
-
-
-# Numerical engineered features
-st.subheader("Engineered Features (Calculated based on historical data up to match date)")
-st.write("Please enter the pre-calculated engineered features for the match:")
-
-home_team_avg_goals_scored_last_10 = st.number_input("Home Team Avg Goals Scored (Last 10)", value=1.5, format="%.2f")
-home_team_avg_goals_conceded_last_10 = st.number_input("Home Team Avg Goals Conceded (Last 10)", value=1.2, format="%.2f")
-home_team_win_percentage_last_10 = st.number_input("Home Team Win Percentage (Last 10)", value=0.6, format="%.2f")
-
-away_team_avg_goals_scored_last_10 = st.number_input("Away Team Avg Goals Scored (Last 10)", value=1.3, format="%.2f")
-away_team_avg_goals_conceded_last_10 = st.number_input("Away Team Avg Goals Conceded (Last 10)", value=1.4, format="%.2f")
-away_team_win_percentage_last_10 = st.number_input("Away Team Win Percentage (Last 10)", value=0.5, format="%.2f")
-
-home_team_h2h_wins = st.number_input("Home Team Head-to-Head Wins", value=0, step=1)
-away_team_h2h_wins = st.number_input("Away Team Head-to-Head Wins", value=0, step=1)
-h2h_draws = st.number_input("Head-to-Head Draws", value=0, step=1)
-
-# Interaction features (calculated from the averages/percentages)
-avg_goals_scored_difference = home_team_avg_goals_scored_last_10 - away_team_avg_goals_scored_last_10
-avg_goals_conceded_difference = home_team_avg_goals_conceded_last_10 - away_team_avg_goals_conceded_last_10
-win_percentage_difference = home_team_win_percentage_last_10 - away_team_win_percentage_last_10
-
-# Display calculated interaction features (optional, but good for user understanding)
-st.subheader("Calculated Interaction Features")
-st.write(f"Average Goals Scored Difference (Home - Away): {avg_goals_scored_difference:.2f}")
-st.write(f"Average Goals Conceded Difference (Home - Away): {avg_goals_conceded_difference:.2f}")
-st.write(f"Win Percentage Difference (Home - Away): {win_percentage_difference:.2f}")
-
-
-# Prediction button
-predict_button = st.button("Predict Outcome")
-
-
-if predict_button:
-    # Create a dictionary with the input data from the Streamlit UI
-    input_data = {
-        'tournament': [tournament],
-        'city': [city],
-        'country': [country],
-        'neutral': [neutral],
-        'home_team_avg_goals_scored_last_10': [home_team_avg_goals_scored_last_10],
-        'home_team_avg_goals_conceded_last_10': [home_team_avg_goals_conceded_last_10],
-        'home_team_win_percentage_last_10': [home_team_win_percentage_last_10],
-        'away_team_avg_goals_scored_last_10': [away_team_avg_goals_scored_last_10],
-        'away_team_avg_goals_conceded_last_10': [away_team_avg_goals_conceded_last_10],
-        'away_team_win_percentage_last_10': [away_team_win_percentage_last_10],
-        'home_team_h2h_wins': [home_team_h2h_wins],
-        'away_team_h2h_wins': [away_team_h2h_wins],
-        'h2h_draws': [h2h_draws],
-        'avg_goals_scored_difference': [avg_goals_scored_difference],
-        'avg_goals_conceded_difference': [avg_goals_conceded_difference],
-        'win_percentage_difference': [win_percentage_difference],
-        # Add placeholder columns that were in the original data but not used as direct features for model input
-        # (like home_team, away_team, date, scores, which are handled by engineered features)
-        'home_team': ["temp_home"], # Dummy values
-        'away_team': ["temp_away"], # Dummy values
-         'date': ['2025-01-01'], # Dummy date
-         'home_score': [None], # Dummy score
-         'away_score': [None]  # Dummy score
-    }
-
-    # Create a DataFrame from the input data
-    input_df = pd.DataFrame(input_data)
-
-    # Ensure the order of columns in input_df matches the original data structure before encoding
-    # This is important for one-hot encoding to work correctly
-    original_columns_order = ['date', 'home_team', 'away_team', 'home_score', 'away_score',
-                              'tournament', 'city', 'country', 'neutral',
-                              'home_team_avg_goals_scored_last_10', 'home_team_avg_goals_conceded_last_10',
-                              'home_team_win_percentage_last_10', 'away_team_avg_goals_scored_last_10',
-                              'away_team_avg_goals_conceded_last_10', 'away_team_win_percentage_last_10',
-                              'home_team_h2h_wins', 'away_team_h2h_wins', 'h2h_draws',
-                              'avg_goals_scored_difference', 'avg_goals_conceded_difference', 'win_percentage_difference'] # Reconstruct the feature order
-
-
-    # Reindex input_df to match the order of original features before encoding
-    # Only include columns that were part of the original features used for one-hot encoding and numerical features
-    features_before_encoding = [col for col in original_columns_order if col in input_df.columns]
-    input_df = input_df[features_before_encoding]
-
-
-    # Apply the same preprocessing steps as used for training data
-
-    # 1. One-hot encode categorical features
-    categorical_cols = ['tournament', 'city', 'country', 'neutral'] # Explicitly list categorical columns
-    input_encoded = pd.get_dummies(input_df, columns=categorical_cols, drop_first=False)
-
-    # 2. Align columns with the training data - crucial step
-    # Here the list of columns loaded from 'training_columns.pkl' is used
-    # to ensure that the user's input columns exactly match the columns
-    # the model was trained with.
-    # Add missing columns present in training but not in new data (fill with 0)
-    for col in training_columns:
-        if col not in input_encoded.columns:
-            input_encoded[col] = 0
-
-    # Drop extra columns present in new data but not in training (shouldn't happen if input structure is correct)
-    extra_cols = [col for col in input_encoded.columns if col not in training_columns]
-    input_encoded = input_encoded.drop(columns=extra_cols)
-
-    # Ensure the order of columns is the same as training data
-    input_encoded = input_encoded[training_columns]
-
-    # The column names in training_columns are already cleaned for LightGBM,
-    # so no extra cleaning is needed here on `input_encoded.columns`.
-
-    # 3. Make prediction
-    # Here the model loaded from 'lgb_model.joblib' is used to make the prediction.
-    predicted_encoded = best_estimator_lgb.predict(input_encoded)
-
-    # 4. Decode the prediction
-    # Here the LabelEncoder loaded from 'label_encoder.joblib' is used
-    # to convert the model's numerical prediction back to a readable text
-    # ('Home Win', 'Away Win', or 'Draw').
-    predicted_result = label_encoder.inverse_transform(predicted_encoded)
-
-    # 5. Display the prediction
-    st.subheader("Predicted Outcome")
-    st.write(f"The predicted match outcome is: **{predicted_result[0]}**")
-
-
-# ----------------------------
-# NUEVA SECCIÓN: Carga de CSV
-# ----------------------------
-st.header("📂 Predicción por archivo CSV")
-
-uploaded_file = st.file_uploader("Sube un archivo CSV con partidos para predecir", type=["csv"])
-
-if uploaded_file is not None:
-    try:
-        df = pd.read_csv(uploaded_file)
-        st.success("Archivo CSV cargado correctamente.")
-        st.dataframe(df.head())
-
-        # Preprocesamiento similar al flujo manual
-        categorical_cols = ['tournament', 'city', 'country', 'neutral']
-        df_encoded = pd.get_dummies(df, columns=categorical_cols, drop_first=False)
-
-        for col in training_columns:
-            if col not in df_encoded.columns:
-                df_encoded[col] = 0
-
-        extra_cols = [col for col in df_encoded.columns if col not in training_columns]
-        df_encoded = df_encoded.drop(columns=extra_cols)
-        df_encoded = df_encoded[training_columns]
-
-        predictions_encoded = best_estimator_lgb.predict(df_encoded)
-        predictions = label_encoder.inverse_transform(predictions_encoded)
-
-        df["Predicción"] = predictions
-
-        st.subheader("📊 Resultados de la predicción:")
-        st.dataframe(df[["home_team", "away_team", "Predicción"]])
-
-    except Exception as e:
-        st.error(f"Ocurrió un error al procesar el archivo: {e}")
-
-
-
-import requests
-
-import requests
-
-import requests
-
-st.header("📊 Estadísticas de los últimos partidos de un equipo (API-Football)")
-
-team_name_input = st.text_input("Nombre del equipo (en inglés, ej: Argentina, Brazil, Germany):", "Germany")
-
-if st.button("Buscar últimos 15 partidos"):
-    # Paso 1: buscar ID del equipo
-    team_search_url = "https://v3.football.api-sports.io/teams"
-    headers = {
-        "x-apisports-key": "39a57dc2bceae2bab6870799951ef4b1"
-    }
-    team_response = requests.get(team_search_url, headers=headers, params={"search": team_name_input})
-
-    if team_response.status_code == 200 and team_response.json()["results"] > 0:
-        team_data = team_response.json()["response"][0]
-        team_id = team_data["team"]["id"]
-        team_name_found = team_data["team"]["name"]
-
-        # Paso 2: buscar últimos 15 partidos
-        fixture_url = "https://v3.football.api-sports.io/fixtures"
-        fixture_response = requests.get(fixture_url, headers=headers, params={
-            "team": team_id,
-            "last": 15
-        })
-
-        if fixture_response.status_code == 200 and fixture_response.json()["results"] > 0:
-            matches = fixture_response.json()["response"]
-            match_options = {
-                f"{m['fixture']['date'][:10]} - {m['teams']['home']['name']} vs {m['teams']['away']['name']}":
-                m['fixture']['id']
-                for m in matches
-            }
-
-            selected_match_label = st.selectbox("Selecciona un partido para ver estadísticas:", list(match_options.keys()))
-            selected_fixture_id = match_options[selected_match_label]
-
-            # Consultar estadísticas del fixture seleccionado
-            stats_url = f"https://v3.football.api-sports.io/fixtures/statistics?fixture={selected_fixture_id}"
-            stats_response = requests.get(stats_url, headers=headers)
-
-            if stats_response.status_code == 200:
-                stats_data = stats_response.json()["response"]
-                if stats_data:
-                    st.subheader(f"📈 Estadísticas de {selected_match_label}")
-                    for team_stats in stats_data:
-                        st.markdown(f"### 📋 {team_stats['team']['name']}")
-                        stats_dict = {item['type']: item['value'] for item in team_stats['statistics']}
-                        st.json(stats_dict)
-                else:
-                    st.warning("Estadísticas no disponibles para este partido.")
-            else:
-                st.error("Error al obtener estadísticas del partido.")
+        if not team1_id or not team2_id:
+            st.error("Uno o ambos equipos no fueron encontrados.")
         else:
-            st.warning(f"No se encontraron partidos recientes para {team_name_found}.")
-    else:
-        st.error("Equipo no encontrado. Asegurate de escribirlo correctamente en inglés.")
+            st.success(f"Equipos detectados: {team1_real_name} vs {team2_real_name}")
 
+            def get_last_matches(team_id):
+                url = "https://v3.football.api-sports.io/fixtures"
+                r = requests.get(url, headers=headers, params={"team": team_id, "last": 10})
+                data = r.json()["response"]
+                for m in data:
+                    m["team_id"] = team_id
+                return data
 
+            def analyze_team(matches):
+                stats = {"goals_for": [], "goals_against": [], "wins": 0, "draws": 0, "losses": 0}
+                for m in matches:
+                    is_home = m["teams"]["home"]["id"] == m["team_id"]
+                    gf = m["goals"]["home"] if is_home else m["goals"]["away"]
+                    ga = m["goals"]["away"] if is_home else m["goals"]["home"]
+                    stats["goals_for"].append(gf)
+                    stats["goals_against"].append(ga)
+                    if gf > ga: stats["wins"] += 1
+                    elif gf == ga: stats["draws"] += 1
+                    else: stats["losses"] += 1
+                return stats
 
-# ---------------------------
-# 📊 Estadísticas por jugador
-# ---------------------------
-st.header("👤 Estadísticas por jugador (del partido seleccionado)")
+            team1_matches = get_last_matches(team1_id)
+            team2_matches = get_last_matches(team2_id)
+            team1_stats = analyze_team(team1_matches)
+            team2_stats = analyze_team(team2_matches)
 
-if 'selected_fixture_id' in locals():
-    player_stats_url = f"https://v3.football.api-sports.io/fixtures/players?fixture={selected_fixture_id}"
-    player_stats_response = requests.get(player_stats_url, headers=headers)
+            t1_avg_goals = np.mean(team1_stats["goals_for"])
+            t2_avg_goals = np.mean(team2_stats["goals_for"])
+            t1_avg_conceded = np.mean(team1_stats["goals_against"])
+            t2_avg_conceded = np.mean(team2_stats["goals_against"])
 
-    if player_stats_response.status_code == 200:
-        player_stats_data = player_stats_response.json()["response"]
-        for team_players in player_stats_data:
-            st.markdown(f"### 🧑‍💼 {team_players['team']['name']}")
-            for player in team_players["players"]:
-                name = player["player"]["name"]
-                stats = player["statistics"][0]
-                st.markdown(f"**{name}**")
-                st.json(stats)
-    else:
-        st.warning("No se pudieron obtener las estadísticas por jugador.")
+            if t1_avg_goals > t2_avg_conceded and t1_avg_goals >= t2_avg_goals:
+                winner = team1_real_name
+            elif t2_avg_goals > t1_avg_conceded and t2_avg_goals > t1_avg_goals:
+                winner = team2_real_name
+            else:
+                winner = "Empate"
 
-# ---------------------------
-# 🏆 Tabla de posiciones
-# ---------------------------
-st.header("🏆 Ranking de una liga")
+            est_team1_goals = round((t1_avg_goals + t2_avg_conceded) / 2, 1)
+            est_team2_goals = round((t2_avg_goals + t1_avg_conceded) / 2, 1)
 
-league_input = st.text_input("Nombre de la liga (ej: Premier League, Bundesliga, La Liga):", "Bundesliga")
+            st.subheader("🔮 Predicción del Resultado")
+            st.write("Resultado probable: {}".format(winner))
+            st.write("Goles esperados: {} {} - {} {}".format(team1_real_name, est_team1_goals, est_team2_goals, team2_real_name))
 
-# Mapeo simple nombre -> ID (puede ampliarse)
-league_ids = {
-    "Premier League": 39,
-    "La Liga": 140,
-    "Bundesliga": 78,
-    "Serie A": 135,
-    "Ligue 1": 61
-}
+            def estimate_stats(team_id):
+                r = requests.get("https://v3.football.api-sports.io/fixtures", headers=headers, params={"team": team_id, "last": 10})
+                matches = r.json()["response"]
+                corners, yellow, red = [], [], []
+                for m in matches:
+                    fid = m["fixture"]["id"]
+                    s = requests.get("https://v3.football.api-sports.io/fixtures/statistics?fixture={}".format(fid), headers=headers)
+                    if s.status_code == 200:
+                        stats = s.json()["response"]
+                        for t in stats:
+                            if t["team"]["id"] == team_id:
+                                sd = {i["type"]: i["value"] for i in t["statistics"]}
+                                corners.append(sd.get("Corner Kicks", 0) or 0)
+                                yellow.append(sd.get("Yellow Cards", 0) or 0)
+                                red.append(sd.get("Red Cards", 0) or 0)
+                return {
+                    "avg_corners": round(np.mean(corners), 1) if corners else 0,
+                    "avg_yellow": round(np.mean(yellow), 1) if yellow else 0,
+                    "avg_red": round(np.mean(red), 1) if red else 0
+                }
 
-if league_input in league_ids:
-    standings_url = "https://v3.football.api-sports.io/standings"
-    standings_response = requests.get(standings_url, headers=headers, params={
-        "league": league_ids[league_input],
-        "season": 2023
-    })
+            team1_extra = estimate_stats(team1_id)
+            team2_extra = estimate_stats(team2_id)
 
-    if standings_response.status_code == 200:
-        data = standings_response.json()
-        standings = data["response"][0]["league"]["standings"][0]
-        st.subheader(f"📊 Tabla de posiciones - {league_input} (2023)")
-        df_standings = pd.DataFrame([{
-            "Posición": team["rank"],
-            "Equipo": team["team"]["name"],
-            "Puntos": team["points"],
-            "PJ": team["all"]["played"],
-            "PG": team["all"]["win"],
-            "PE": team["all"]["draw"],
-            "PP": team["all"]["lose"],
-            "GF": team["all"]["goals"]["for"],
-            "GC": team["all"]["goals"]["against"]
-        } for team in standings])
-        st.dataframe(df_standings)
-    else:
-        st.error("No se pudo obtener el ranking.")
-else:
-    st.info("Escribe exactamente el nombre de una liga soportada (ej: Bundesliga, Premier League, etc.).")
+            st.subheader("📊 Estadísticas esperadas")
+            st.write("Córners: {} {} - {} {}".format(team1_real_name, team1_extra['avg_corners'], team2_extra['avg_corners'], team2_real_name))
+            st.write("Tarjetas amarillas: {} {} - {} {}".format(team1_real_name, team1_extra['avg_yellow'], team2_extra['avg_yellow'], team2_real_name))
+            st.write("Tarjetas rojas: {} {} - {} {}".format(team1_real_name, team1_extra['avg_red'], team2_extra['avg_red'], team2_real_name))
+
+            likely = team1_real_name if est_team1_goals > est_team2_goals else team2_real_name
+            st.write("🥅 Goleador más probable de: {}".format(likely))
+
+            # Goleadores reales del último partido
+            st.subheader("👤 Goleadores recientes (último partido entre ambos)")
+            h2h_last_response = requests.get("https://v3.football.api-sports.io/fixtures/headtohead", headers=headers, params={
+                "h2h": "{}-{}".format(team1_id, team2_id),
+                "last": 1
+            })
+            if h2h_last_response.status_code == 200:
+                h2h_last_data = h2h_last_response.json()["response"]
+                if h2h_last_data:
+                    last_fixture_id = h2h_last_data[0]["fixture"]["id"]
+                    events_response = requests.get("https://v3.football.api-sports.io/fixtures/events?fixture={}".format(last_fixture_id), headers=headers)
+                    if events_response.status_code == 200:
+                        events = events_response.json()["response"]
+                        scorers = [e["player"]["name"] for e in events if e["type"] == "Goal" and e.get("player")]
+                        if scorers:
+                            top_scorers = Counter(scorers).most_common(3)
+                            st.markdown("**Goleadores destacados:**")
+                            for name, count in top_scorers:
+                                st.markdown("- {} ⚽ x{}".format(name, count))
+                        else:
+                            st.info("No se registraron goles en el último partido.")
+                    else:
+                        st.warning("No se pudieron obtener los eventos.")
+                else:
+                    st.warning("No se encontró un partido reciente entre estos equipos.")
+            else:
+                st.error("Error al consultar H2H.")
