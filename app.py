@@ -135,3 +135,4 @@ if st.button("Analizar partido"):
                     st.warning("No se encontró un partido reciente entre estos equipos.")
             else:
                 st.error("Error al consultar H2H.")
+
