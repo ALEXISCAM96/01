@@ -212,3 +212,49 @@ if uploaded_file is not None:
 
     except Exception as e:
         st.error(f"Ocurrió un error al procesar el archivo: {e}")
+
+
+
+import requests
+
+st.header("📊 Estadísticas del último partido de un equipo (API-Football)")
+
+team_name_input = st.text_input("Nombre del equipo (en inglés, ej: Argentina, Brazil, Germany):", "Argentina")
+
+if st.button("Buscar último partido y estadísticas"):
+    # Paso 1: buscar ID del equipo
+    team_search_url = "https://v3.football.api-sports.io/teams"
+    headers = {
+        "x-apisports-key": "39a57dc2bceae2bab6870799951ef4b1"
+    }
+    team_response = requests.get(team_search_url, headers=headers, params={"search": team_name_input})
+
+    if team_response.status_code == 200 and team_response.json()["results"] > 0:
+        team_data = team_response.json()["response"][0]
+        team_id = team_data["team"]["id"]
+
+        # Paso 2: buscar último partido
+        fixture_url = "https://v3.football.api-sports.io/fixtures"
+        fixture_response = requests.get(fixture_url, headers=headers, params={
+            "team": team_id,
+            "season": 2023,
+            "last": 1
+        })
+
+        if fixture_response.status_code == 200 and fixture_response.json()["results"] > 0:
+            match = fixture_response.json()["response"][0]
+            stats = match["statistics"]
+
+            home_team = match["teams"]["home"]["name"]
+            away_team = match["teams"]["away"]["name"]
+            st.subheader(f"{home_team} vs {away_team}")
+
+            # Mostrar estadísticas por equipo
+            for team_stats in stats:
+                st.markdown(f"### 📋 {team_stats['team']['name']}")
+                stats_dict = {item['type']: item['value'] for item in team_stats['statistics']}
+                st.json(stats_dict)
+        else:
+            st.error("No se encontró el último partido del equipo.")
+    else:
+        st.error("Equipo no encontrado. Asegurate de escribirlo correctamente en inglés.")
